@@ -10,7 +10,7 @@ from tqdm import tqdm, trange
 from itertools import islice
 from einops import rearrange, repeat
 from torchvision.utils import make_grid
-from torch.cuda.amp import autocast
+from torch import autocast
 from contextlib import nullcontext
 import time
 from pytorch_lightning import seed_everything
