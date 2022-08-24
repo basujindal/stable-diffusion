@@ -1,7 +1,7 @@
 import torch
 from diffusers import LDMTextToImagePipeline
 
-pipe = LDMTextToImagePipeline.from_pretrained("CompVis/stable-diffusion-v1-3-diffusers", use_auth_token=True)
+pipe = LDMTextToImagePipeline.from_pretrained("CompVis/stable-diffusion-v1-4-diffusers", use_auth_token=True)
 
 prompt  = "19th Century wooden engraving of Elon musk"
 
