@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from random import randint
 from omegaconf import OmegaConf
-from PIL import Image
+from PIL import Image, PngImagePlugin
 from tqdm import tqdm, trange
 from itertools import islice
 from einops import rearrange
@@ -317,8 +317,18 @@ with torch.no_grad():
                     x_samples_ddim = modelFS.decode_first_stage(samples_ddim[i].unsqueeze(0))
                     x_sample = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
                     x_sample = 255. * rearrange(x_sample[0].cpu().numpy(), 'c h w -> h w c')
+                    info = PngImagePlugin.PngInfo()
+                    info.add_text("Init Img", os.path.join(os.path.basename(os.path.dirname(opt.init_img)), os.path.basename(opt.init_img)))
+                    info.add_text("Prompt", opt.prompt)
+                    info.add_text("Seed", str(opt.seed))
+                    info.add_text("Scale", str(opt.scale))
+                    info.add_text("Steps", str(opt.ddim_steps))
+                    info.add_text("Strength", str(opt.strength))
+                    info.add_text("Precision", opt.precision)
+                    info.add_text("Batch Size", str(opt.n_samples))
+                    info.add_text("Batch Index", str(i))
                     Image.fromarray(x_sample.astype(np.uint8)).save(
-                        os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.png"))
+                        os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.png"), "PNG", pnginfo=info)
                     opt.seed+=1
                     base_count += 1
 
