@@ -189,4 +189,5 @@ demo = gr.Interface(
     gr.Slider(64,4096,value = 512,step=64), gr.Slider(64,4096,value = 512,step=64), gr.Slider(0,50,value=7.5,step=0.1),gr.Slider(0,1,step=0.01),"text","checkbox", "checkbox",gr.Text(value = "outputs/txt2img-samples")],
     outputs=["image", "text"],
 )
+demo.queue(concurrency_count=1)
 demo.launch()
