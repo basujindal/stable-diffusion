@@ -193,6 +193,40 @@ os.makedirs(sample_path, exist_ok=True)
 base_count = len(os.listdir(sample_path))
 grid_count = len(os.listdir(outpath)) - 1
 
+# log file
+log1 = 'prompt = '+opt.prompt
+log2 = 'seed = '+str(opt.seed)
+log3 = 'ddim_steps = '+str(opt.ddim_steps)
+log4 = 'n_iter = '+str(opt.n_iter)
+log5 = 'resolution = '+str(opt.W)+'x'+str(opt.H)
+log6 = 'latent channels = '+str(opt.C)
+log7 = 'downsampling factor = '+str(opt.f)
+log8 = 'samples = '+str(opt.n_samples)
+log9 = 'grid rows = '+str(opt.n_rows)
+log10 = 'scale = '+str(opt.scale)
+log11 = 'from-file = '+str(opt.from_file)
+log12 = 'small_batch = '+str(opt.small_batch)
+log13 = 'precision = '+str(opt.precision)
+log14 = 'strength = '+str(opt.strength)
+log15 = 'initial image = '+str(opt.init_img)
+
+if os.path.exists(os.path.join(sample_path, "log.txt")):
+    count = range(1,100000)
+    for runcount in count:
+        if os.path.exists(os.path.join(sample_path, "log"+str(100000-runcount)+".txt")):
+            continue
+        else:
+            logtxt = "log"+str(100000-runcount)+".txt"
+else:
+    logtxt = "log.txt"
+
+log_lines = [log1, log15, log2, log14, log3, log4, log5, log6, log7, log8, log9, log10, log11, log12, log13]
+with open(os.path.join(sample_path, logtxt), 'w') as f:
+    for line in log_lines:
+        f.write(line)
+        f.write('\n')
+###
+
 if opt.seed == None:
     opt.seed = randint(0, 1000000)
 seed_everything(opt.seed)
