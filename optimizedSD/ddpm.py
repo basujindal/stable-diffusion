@@ -334,7 +334,7 @@ class UNet(DDPM):
                  cond_stage_forward=None,
                  conditioning_key=None,
                  scale_factor=1.0,
-                 small_batch = False,
+                 unet_bs = 1,
                  scale_by_std=False,
                  *args, **kwargs):
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
@@ -350,6 +350,7 @@ class UNet(DDPM):
         self.cond_stage_trainable = cond_stage_trainable
         self.cond_stage_key = cond_stage_key
         self.num_downs = 0
+        self.cdevice = "cuda"
         self.unetConfigEncode = unetConfigEncode
         self.unetConfigDecode = unetConfigDecode
         if not scale_by_std:
@@ -363,7 +364,8 @@ class UNet(DDPM):
         self.model2 = DiffusionWrapperOut(self.unetConfigDecode)
         self.model1.eval()
         self.model2.eval()
-        self.small_batch = small_batch
+        self.turbo = False
+        self.unet_bs = unet_bs
         self.restarted_from_ckpt = False
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys)
@@ -383,7 +385,7 @@ class UNet(DDPM):
             # set rescale weight to 1./std of encodings
             print("### USING STD-RESCALING ###")
             x = super().get_input(batch, self.first_stage_key)
-            x = x.to(self.device)
+            x = x.to(self.cdevice)
             encoder_posterior = self.encode_first_stage(x)
             z = self.get_first_stage_encoding(encoder_posterior).detach()
             del self.scale_factor
@@ -394,10 +396,10 @@ class UNet(DDPM):
 
     def apply_model(self, x_noisy, t, cond, return_ids=False):
           
-        self.model1.to("cuda")
-        step = 1
-        if self.small_batch:
-            step = 2
+        if(not self.turbo):
+            self.model1.to(self.cdevice)
+
+        step = self.unet_bs
         h,emb,hs = self.model1(x_noisy[0:step], t[:step], cond[:step])
         bs = cond.shape[0]
         
@@ -411,8 +413,10 @@ class UNet(DDPM):
             for j in range(lenhs):
                 hs[j] = torch.cat((hs[j], hs_temp[j]))
         
-        self.model1.to("cpu")
-        self.model2.to("cuda")
+
+        if(not self.turbo):
+            self.model1.to("cpu")
+            self.model2.to(self.cdevice)
         
         hs_temp = [hs[j][:step] for j in range(lenhs)]
         x_recon = self.model2(h[:step],emb[:step],x_noisy.dtype,hs_temp,cond[:step])
@@ -423,7 +427,8 @@ class UNet(DDPM):
             x_recon1 = self.model2(h[i:i+step],emb[i:i+step],x_noisy.dtype,hs_temp,cond[i:i+step])
             x_recon = torch.cat((x_recon, x_recon1))
 
-        self.model2.to("cpu")
+        if(not self.turbo):
+            self.model2.to("cpu")
 
         if isinstance(x_recon, tuple) and not return_ids:
             return x_recon[0]
@@ -432,17 +437,18 @@ class UNet(DDPM):
 
     def register_buffer1(self, name, attr):
             if type(attr) == torch.Tensor:
-                if attr.device != torch.device("cuda"):
-                    attr = attr.to(torch.device("cuda"))
+                if attr.device != torch.device(self.cdevice):
+                    attr = attr.to(torch.device(self.cdevice))
             setattr(self, name, attr)
 
     def make_schedule(self, ddim_num_steps, ddim_discretize="uniform", ddim_eta=0., verbose=True):
+
 
         self.ddim_timesteps = make_ddim_timesteps(ddim_discr_method=ddim_discretize, num_ddim_timesteps=ddim_num_steps,
                                                   num_ddpm_timesteps=self.num_timesteps,verbose=verbose)
         alphas_cumprod = self.alphas_cumprod
         assert alphas_cumprod.shape[0] == self.num_timesteps, 'alphas have to be defined for each timestep'
-        to_torch = lambda x: x.to(self.device)
+        to_torch = lambda x: x.to(self.cdevice)
 
         self.register_buffer1('betas', to_torch(self.betas))
         self.register_buffer1('alphas_cumprod', to_torch(alphas_cumprod))
@@ -501,6 +507,11 @@ class UNet(DDPM):
         C, H, W = shape
         size = (batch_size, C, H, W)
         print(f'Data shape for PLMS sampling is {size}')
+
+        if(self.turbo):
+            self.model1.to(self.cdevice)
+            self.model2.to(self.cdevice)
+
         samples = self.plms_sampling(conditioning, size, seed,
                                                     callback=callback,
                                                     img_callback=img_callback,
@@ -516,6 +527,10 @@ class UNet(DDPM):
                                                     unconditional_guidance_scale=unconditional_guidance_scale,
                                                     unconditional_conditioning=unconditional_conditioning,
                                                     )
+
+        if(self.turbo):
+            self.model1.to("cpu")
+            self.model2.to("cpu")
 
         return samples
 
@@ -672,15 +687,19 @@ class UNet(DDPM):
                 seed+=1
             noise = torch.cat(tens)
             del tens
-        print(noise.shape)
         if mask is not None:
             noise = noise*mask
         return (extract_into_tensor(sqrt_alphas_cumprod, t, x0.shape) * x0 +
-                extract_into_tensor(sqrt_one_minus_alphas_cumprod.to("cuda"), t, x0.shape) * noise)
+                extract_into_tensor(sqrt_one_minus_alphas_cumprod.to(self.cdevice), t, x0.shape) * noise)
 
     @torch.no_grad()
     def decode(self, x_latent, cond, t_start, unconditional_guidance_scale=1.0, unconditional_conditioning=None,
                mask = None,use_original_steps=False):
+
+        
+        if(self.turbo):
+            self.model1.to(self.cdevice)
+            self.model2.to(self.cdevice)
 
         timesteps = np.arange(self.ddpm_num_timesteps) if use_original_steps else self.ddim_timesteps
         timesteps = timesteps[:t_start]
@@ -691,21 +710,25 @@ class UNet(DDPM):
 
         iterator = tqdm(time_range, desc='Decoding image', total=total_steps)
         x_dec = x_latent
-        x0 = x_latent
-        print(x0.shape)
+        # x0 = x_latent
         for i, step in enumerate(iterator):
             index = total_steps - i - 1
             ts = torch.full((x_latent.shape[0],), step, device=x_latent.device, dtype=torch.long)
             
 
-            if mask is not None:
-                x_dec = x0 * mask + (1. - mask) * x_dec
+            # if mask is not None:
+            #     x_dec = x0 * mask + (1. - mask) * x_dec
 
             x_dec = self.p_sample_ddim(x_dec, cond, ts, index=index, use_original_steps=use_original_steps,
                                           unconditional_guidance_scale=unconditional_guidance_scale,
                                           unconditional_conditioning=unconditional_conditioning)
-        if mask is not None:
-            return x0 * mask + (1. - mask) * x_dec
+        # if mask is not None:
+        #     return x0 * mask + (1. - mask) * x_dec
+        
+        if(self.turbo):
+            self.model1.to("cpu")
+            self.model2.to("cpu")
+
         return x_dec
 
     @torch.no_grad()

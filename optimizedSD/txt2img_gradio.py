@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torchvision.utils import make_grid
 from einops import rearrange
-import os
+import os, re
 from PIL import Image
 import torch
 import numpy as np
@@ -22,6 +22,9 @@ from ldm.util import instantiate_from_config
 from split_subprompts import split_weighted_subprompts
 from transformers import logging
 logging.set_verbosity_error()
+import mimetypes
+mimetypes.init()
+mimetypes.add_type('application/javascript', '.js')
 
 
 def chunk(it, size):
@@ -59,7 +62,6 @@ for key in lo:
     sd['model2.' + key[6:]] = sd.pop(key)
 
 config = OmegaConf.load(f"{config}")
-config.modelUNet.params.small_batch = False
 
 model = instantiate_from_config(config.modelUNet)
 _, _ = model.load_state_dict(sd, strict=False)
@@ -74,36 +76,41 @@ _, _ = modelFS.load_state_dict(sd, strict=False)
 modelFS.eval()
 del sd
 
-def generate(prompt,ddim_steps,n_iter, batch_size, Height, Width, scale, ddim_eta, seed, small_batch, full_precision,outdir):
+def generate(prompt,ddim_steps,n_iter, batch_size, Height, Width, scale, ddim_eta,unet_bs, device,seed, outdir,turbo,full_precision,):
    
-    device = "cuda"
+    seeds = ''
     C = 4
     f = 8
     start_code = None
+    model.unet_bs = unet_bs
+    model.turbo = turbo
+    model.cdevice = device
+    modelCS.cond_stage_model.device = device
 
-    model.small_batch = small_batch
-    if not full_precision:
+    if device != 'cpu' and full_precision == False:
         model.half()
         modelCS.half()
 
     tic = time.time()
     os.makedirs(outdir, exist_ok=True)
     outpath = outdir
-    sample_path = os.path.join(outpath, "_".join(prompt.split()))[:150]
+    sample_path = os.path.join(outpath, '_'.join(re.split(':| ',prompt)))[:150]
     os.makedirs(sample_path, exist_ok=True)
     base_count = len(os.listdir(sample_path))
     
     if seed == '':
         seed = randint(0, 1000000)
     seed = int(seed)
-    print("init_seed = ", seed)
     seed_everything(seed)
 
     # n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
     assert prompt is not None
     data = [batch_size * [prompt]]
 
-    precision_scope = autocast if not full_precision else nullcontext
+    if full_precision== False and device != "cpu":
+        precision_scope = autocast
+    else:
+        precision_scope = nullcontext
 
     all_samples = []
     with torch.no_grad():
@@ -133,10 +140,12 @@ def generate(prompt,ddim_steps,n_iter, batch_size, Height, Width, scale, ddim_et
                         c = modelCS.get_learned_conditioning(prompts)
 
                     shape = [C, Height // f, Width // f]
-                    mem = torch.cuda.memory_allocated()/1e6
-                    modelCS.to("cpu")
-                    while(torch.cuda.memory_allocated()/1e6 >= mem):
-                        time.sleep(1)
+
+                    if device != 'cpu':
+                        mem = torch.cuda.memory_allocated()/1e6
+                        modelCS.to("cpu")
+                        while(torch.cuda.memory_allocated()/1e6 >= mem):
+                            time.sleep(1)
 
 
                     samples_ddim = model.sample(S=ddim_steps,
@@ -160,14 +169,16 @@ def generate(prompt,ddim_steps,n_iter, batch_size, Height, Width, scale, ddim_et
                         x_sample = 255. * rearrange(x_sample[0].cpu().numpy(), 'c h w -> h w c')
                         Image.fromarray(x_sample.astype(np.uint8)).save(
                             os.path.join(sample_path, "seed_" + str(seed) + "_" + f"{base_count:05}.png"))
+                        seeds+= str(seed) + ','
                         seed+=1
                         base_count += 1
 
-
-                    mem = torch.cuda.memory_allocated()/1e6
-                    modelFS.to("cpu")
-                    while(torch.cuda.memory_allocated()/1e6 >= mem):
-                        time.sleep(1)
+                    if device != 'cpu':
+                        mem = torch.cuda.memory_allocated()/1e6
+                        modelFS.to("cpu")
+                        while(torch.cuda.memory_allocated()/1e6 >= mem):
+                            time.sleep(1)
+                            
                     del samples_ddim
                     del x_sample
                     del x_samples_ddim
@@ -180,13 +191,17 @@ def generate(prompt,ddim_steps,n_iter, batch_size, Height, Width, scale, ddim_et
     grid = make_grid(grid, nrow=n_iter)
     grid = 255. * rearrange(grid, 'c h w -> h w c').cpu().numpy()
     
-    txt = "Your samples are ready in " + str(round(time_taken, 3)) + " minutes and waiting for you here \n" + sample_path
+    txt = "Your samples are ready in " + str(round(time_taken, 3)) + " minutes and waiting for you here " + sample_path + "\nSeeds used = " + seeds[:-1]
     return Image.fromarray(grid.astype(np.uint8)), txt
 
 demo = gr.Interface(
     fn=generate,
-    inputs=["text",gr.Slider(1, 1000,value=50),gr.Slider(1, 100, step=1), gr.Slider(1, 100,step=1),
-    gr.Slider(64,4096,value = 512,step=64), gr.Slider(64,4096,value = 512,step=64), gr.Slider(0,50,value=7.5,step=0.1),gr.Slider(0,1,step=0.01),"text","checkbox", "checkbox",gr.Text(value = "outputs/txt2img-samples")],
+    inputs=["text",gr.Slider(1, 1000,value=50),gr.Slider(1, 100, step=1),
+            gr.Slider(1, 100,step=1), gr.Slider(64,4096,value = 512,step=64), 
+            gr.Slider(64,4096,value = 512,step=64),gr.Slider(0,50,value=7.5,step=0.1),
+            gr.Slider(0,1,step=0.01),gr.Slider(1,2,value = 1,step=1),
+            gr.Text(value = "cuda"),"text",gr.Text(value = "outputs/txt2img-samples"),
+            "checkbox", "checkbox",],
     outputs=["image", "text"],
 )
 demo.launch()

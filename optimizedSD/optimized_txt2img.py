@@ -1,7 +1,6 @@
-import argparse, os, sys, glob, random
+import argparse, os, re
 import torch
 import numpy as np
-import copy
 from random import randint
 from omegaconf import OmegaConf
 from PIL import Image, PngImagePlugin
@@ -35,7 +34,6 @@ def load_model_from_config(ckpt, verbose=False):
 
 config = "optimizedSD/v1-inference.yaml"
 ckpt = "models/ldm/stable-diffusion-v1/model.ckpt"
-device = "cuda"
 
 parser = argparse.ArgumentParser()
 
@@ -130,6 +128,12 @@ parser.add_argument(
     help="unconditional guidance scale: eps = eps(x, empty) + scale * (eps(x, cond) - eps(x, empty))",
 )
 parser.add_argument(
+    "--device",
+    type=str,
+    default="cuda",
+    help="specify GPU (cuda/cuda:0/cuda:1/...)",
+)
+parser.add_argument(
     "--from-file",
     type=str,
     help="if specified, load prompts from this file",
@@ -141,9 +145,15 @@ parser.add_argument(
     help="the seed (for reproducible sampling)",
 )
 parser.add_argument(
-    "--small_batch",
+    "--unet_bs",
+    type=int,
+    default=1,
+    help="Slightly reduces inference time at the expense of high VRAM (value > 1 not recommended )",
+)
+parser.add_argument(
+    "--turbo",
     action='store_true',
-    help="Reduce inference time when generate a smaller batch of images",
+    help="Reduces inference time on the expense of 1GB VRAM",
 )
 parser.add_argument(
     "--precision",
@@ -158,20 +168,17 @@ tic = time.time()
 os.makedirs(opt.outdir, exist_ok=True)
 outpath = opt.outdir
 
-sample_path = os.path.join(outpath, "_".join(opt.prompt.split()))[:150]
+sample_path = os.path.join(outpath, '_'.join(re.split(':| ',opt.prompt)))[:150]
 os.makedirs(sample_path, exist_ok=True)
 base_count = len(os.listdir(sample_path))
 grid_count = len(os.listdir(outpath)) - 1
 
 if opt.seed == None:
     opt.seed = randint(0, 1000000)
-print("init_seed = ", opt.seed)
 seed_everything(opt.seed)
 
-
 sd = load_model_from_config(f"{ckpt}")
-li = []
-lo = []
+li, lo = [], []
 for key, value in sd.items():
     sp = key.split('.')
     if(sp[0]) == 'model':
@@ -190,33 +197,30 @@ for key in lo:
 
 config = OmegaConf.load(f"{config}")
 
-if opt.small_batch:
-    config.modelUNet.params.small_batch = True
-else:
-    config.modelUNet.params.small_batch = False
-
-
-
 model = instantiate_from_config(config.modelUNet)
 _, _ = model.load_state_dict(sd, strict=False)
 model.eval()
+model.unet_bs = opt.unet_bs
+model.cdevice = opt.device
+model.turbo = opt.turbo
     
 modelCS = instantiate_from_config(config.modelCondStage)
 _, _ = modelCS.load_state_dict(sd, strict=False)
 modelCS.eval()
+modelCS.cond_stage_model.device = opt.device
     
 modelFS = instantiate_from_config(config.modelFirstStage)
 _, _ = modelFS.load_state_dict(sd, strict=False)
 modelFS.eval()
 del sd
 
-if opt.precision == "autocast":
+if opt.device != "cpu" and opt.precision == "autocast":
     model.half()
     modelCS.half()
 
 start_code = None
 if opt.fixed_code:
-    start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
+    start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=opt.device)
 
 
 batch_size = opt.n_samples
@@ -234,14 +238,19 @@ else:
         data = list(chunk(data, batch_size))
 
 
-precision_scope = autocast if opt.precision=="autocast" else nullcontext
+if opt.precision=="autocast" and opt.device != "cpu":
+    precision_scope = autocast
+else:
+    precision_scope = nullcontext
+
+seeds = ''
 with torch.no_grad():
 
     all_samples = list()
     for n in trange(opt.n_iter, desc="Sampling"):
         for prompts in tqdm(data, desc="data"):
              with precision_scope("cuda"):
-                modelCS.to(device)
+                modelCS.to(opt.device)
                 uc = None
                 if opt.scale != 1.0:
                     uc = modelCS.get_learned_conditioning(batch_size * [""])
@@ -264,10 +273,12 @@ with torch.no_grad():
 
 
                 shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
-                mem = torch.cuda.memory_allocated()/1e6
-                modelCS.to("cpu")
-                while(torch.cuda.memory_allocated()/1e6 >= mem):
-                    time.sleep(1)
+
+                if(opt.device != 'cpu'):
+                    mem = torch.cuda.memory_allocated()/1e6
+                    modelCS.to("cpu")
+                    while(torch.cuda.memory_allocated()/1e6 >= mem):
+                        time.sleep(1)
 
 
                 samples_ddim = model.sample(S=opt.ddim_steps,
@@ -281,7 +292,7 @@ with torch.no_grad():
                                 eta=opt.ddim_eta,
                                 x_T=start_code)
 
-                modelFS.to(device)
+                modelFS.to(opt.device)
 
                 print(samples_ddim.shape)
                 print("saving images")
@@ -300,14 +311,15 @@ with torch.no_grad():
                     info.add_text("Batch Index", str(i))
                     Image.fromarray(x_sample.astype(np.uint8)).save(
                         os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.png"), "PNG", pnginfo=info)
+                    seeds+= str(opt.seed) + ','
                     opt.seed+=1
                     base_count += 1
 
-
-                mem = torch.cuda.memory_allocated()/1e6
-                modelFS.to("cpu")
-                while(torch.cuda.memory_allocated()/1e6 >= mem):
-                    time.sleep(1)
+                if(opt.device != 'cpu'):
+                    mem = torch.cuda.memory_allocated()/1e6
+                    modelFS.to("cpu")
+                    while(torch.cuda.memory_allocated()/1e6 >= mem):
+                        time.sleep(1)
                 del samples_ddim
                 print("memory_final = ", torch.cuda.memory_allocated()/1e6)
 
@@ -315,4 +327,4 @@ toc = time.time()
 
 time_taken = (toc-tic)/60.0
 
-print(("Your samples are ready in {0:.2f} minutes and waiting for you here \n" + sample_path).format(time_taken))
+print(("Your samples are ready in {0:.2f} minutes and waiting for you here " + sample_path + "\n Seeds used = " + seeds[:-1]).format(time_taken))

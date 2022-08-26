@@ -2,7 +2,7 @@ import gradio as gr
 import numpy as np
 import torch
 from torchvision.utils import make_grid
-import os
+import os, re
 from PIL import Image
 import torch
 import numpy as np
@@ -20,9 +20,11 @@ from einops import rearrange, repeat
 from contextlib import nullcontext
 from ldm.util import instantiate_from_config
 from transformers import logging
-from split_subprompts import split_weighted_subprompts
 logging.set_verbosity_error()
-
+from split_subprompts import split_weighted_subprompts
+import mimetypes
+mimetypes.init()
+mimetypes.add_type('application/javascript', '.js')
 
 def chunk(it, size):
     it = iter(it)
@@ -76,7 +78,6 @@ for key in lo:
     sd['model2.' + key[6:]] = sd.pop(key)
 
 config = OmegaConf.load(f"{config}")
-config.modelUNet.params.small_batch = False
 
 model = instantiate_from_config(config.modelUNet)
 _, _ = model.load_state_dict(sd, strict=False)
@@ -91,13 +92,16 @@ _, _ = modelFS.load_state_dict(sd, strict=False)
 modelFS.eval()
 del sd
 
-def generate(image, prompt,strength,ddim_steps,n_iter, batch_size, Height, Width, scale,ddim_eta, seed, small_batch = "False", full_precision = "False",outdir = "outputs/img2img-samples"):
-   
-    device = "cuda"
-    model.small_batch = small_batch
-    
+def generate(image, prompt,strength,ddim_steps,n_iter, batch_size, Height, Width, scale,ddim_eta, unet_bs,device,seed,outdir, turbo, full_precision):
+
+    seeds = ''
     init_image = load_img(image, Height, Width).to(device)
-    if not full_precision:
+    model.unet_bs = unet_bs
+    model.turbo = turbo
+    model.cdevice = device
+    modelCS.cond_stage_model.device = device
+
+    if device != 'cpu' and full_precision == False:
         model.half()
         modelCS.half()
         modelFS.half()
@@ -106,14 +110,13 @@ def generate(image, prompt,strength,ddim_steps,n_iter, batch_size, Height, Width
     tic = time.time()
     os.makedirs(outdir, exist_ok=True)
     outpath = outdir
-    sample_path = os.path.join(outpath, "_".join(prompt.split()))[:150]
+    sample_path = os.path.join(outpath, '_'.join(re.split(':| ',prompt)))[:150]
     os.makedirs(sample_path, exist_ok=True)
     base_count = len(os.listdir(sample_path))
     
     if seed == '':
         seed = randint(0, 1000000)
     seed = int(seed)
-    print("init_seed = ", seed)
     seed_everything(seed)
 
     # n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
@@ -125,17 +128,21 @@ def generate(image, prompt,strength,ddim_steps,n_iter, batch_size, Height, Width
     init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
     init_latent = modelFS.get_first_stage_encoding(modelFS.encode_first_stage(init_image))  # move to latent space
 
-    mem = torch.cuda.memory_allocated()/1e6
-    modelFS.to("cpu")
-    while(torch.cuda.memory_allocated()/1e6 >= mem):
-        time.sleep(1)
+    if(device != 'cpu'):
+        mem = torch.cuda.memory_allocated()/1e6
+        modelFS.to("cpu")
+        while(torch.cuda.memory_allocated()/1e6 >= mem):
+            time.sleep(1)
 
 
     assert 0. <= strength <= 1., 'can only work with strength in [0.0, 1.0]'
     t_enc = int(strength *ddim_steps)
     print(f"target t_enc is {t_enc} steps")
 
-    precision_scope = autocast if not full_precision else nullcontext
+    if full_precision== False and device != "cpu":
+        precision_scope = autocast
+    else:
+        precision_scope = nullcontext
 
     all_samples = []
     with torch.no_grad():
@@ -164,10 +171,11 @@ def generate(image, prompt,strength,ddim_steps,n_iter, batch_size, Height, Width
                         c = modelCS.get_learned_conditioning(prompts)
                     
                     c = modelCS.get_learned_conditioning(prompts)
-                    mem = torch.cuda.memory_allocated()/1e6
-                    modelCS.to("cpu")
-                    while(torch.cuda.memory_allocated()/1e6 >= mem):
-                        time.sleep(1)
+                    if(device != 'cpu'):
+                        mem = torch.cuda.memory_allocated()/1e6
+                        modelCS.to("cpu")
+                        while(torch.cuda.memory_allocated()/1e6 >= mem):
+                            time.sleep(1)
 
                     # encode (scaled latent)
                     z_enc = model.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device), seed,ddim_eta,ddim_steps)
@@ -185,14 +193,17 @@ def generate(image, prompt,strength,ddim_steps,n_iter, batch_size, Height, Width
                         x_sample = 255. * rearrange(x_sample[0].cpu().numpy(), 'c h w -> h w c')
                         Image.fromarray(x_sample.astype(np.uint8)).save(
                             os.path.join(sample_path, "seed_" + str(seed) + "_" + f"{base_count:05}.png"))
+                        seeds+= str(seed) + ','
                         seed+=1
                         base_count += 1
 
 
-                    mem = torch.cuda.memory_allocated()/1e6
-                    modelFS.to("cpu")
-                    while(torch.cuda.memory_allocated()/1e6 >= mem):
-                        time.sleep(1)
+                    if(device != 'cpu'):
+                        mem = torch.cuda.memory_allocated()/1e6
+                        modelFS.to("cpu")
+                        while(torch.cuda.memory_allocated()/1e6 >= mem):
+                            time.sleep(1)
+
                     del samples_ddim
                     del x_sample
                     del x_samples_ddim
@@ -205,13 +216,17 @@ def generate(image, prompt,strength,ddim_steps,n_iter, batch_size, Height, Width
     grid = make_grid(grid, nrow=n_iter)
     grid = 255. * rearrange(grid, 'c h w -> h w c').cpu().numpy()
     
-    txt = "Your samples are ready in " + str(round(time_taken, 3)) + " minutes and waiting for you here \n" + sample_path
+    txt = "Your samples are ready in " + str(round(time_taken, 3)) + " minutes and waiting for you here \n" + sample_path + "\nSeeds used = " + seeds[:-1]
     return Image.fromarray(grid.astype(np.uint8)), txt
 
 demo = gr.Interface(
     fn=generate,
-    inputs=[gr.Image(tool="editor", type="pil"),"text",gr.Slider(0, 1,value=0.75),gr.Slider(1, 1000,value=50),gr.Slider(1, 100, step=1), gr.Slider(1, 100,step=1),
-    gr.Slider(64,4096,value = 512,step=64), gr.Slider(64,4096,value = 512,step=64), gr.Slider(0,50,value=7.5,step=0.1),gr.Slider(0,1,step=0.01),"text","checkbox", "checkbox",gr.Text(value = "outputs/img2img-samples")],
+    inputs=[gr.Image(tool="editor", type="pil"),"text",gr.Slider(0, 1,value=0.75),
+            gr.Slider(1, 1000,value=50),gr.Slider(1, 100, step=1), gr.Slider(1, 100,step=1),
+            gr.Slider(64,4096,value = 512,step=64), gr.Slider(64,4096,value = 512,step=64), 
+            gr.Slider(0,50,value=7.5,step=0.1),gr.Slider(0,1,step=0.01),
+            gr.Slider(1,2,value = 1,step=1),gr.Text(value = "cuda"), "text",
+            gr.Text(value = "outputs/img2img-samples"),"checkbox", "checkbox",],
     outputs=["image", "text"],
 )
 demo.launch()
