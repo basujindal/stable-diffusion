@@ -204,4 +204,5 @@ demo = gr.Interface(
             "checkbox", "checkbox",],
     outputs=["image", "text"],
 )
+demo.queue(concurrency_count=1)
 demo.launch()
