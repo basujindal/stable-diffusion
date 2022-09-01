@@ -59,6 +59,31 @@ def load_img(image, h0, w0):
     image = torch.from_numpy(image)
     return 2.0 * image - 1.0
 
+
+def load_mask(mask, h0, w0, invert=False):
+   
+    image = mask.convert("RGB")
+    w, h = image.size
+    print(f"loaded input image of size ({w}, {h})")   
+    if(h0 is not None and w0 is not None):
+        h, w = h0, w0
+    
+    w, h = map(lambda x: x - x % 64, (w, h))  # resize to integer multiple of 32
+
+    print(f"New image size ({w}, {h})")
+    image = image.resize((64, 64), resample = Image.LANCZOS)
+    image = np.array(image)
+
+    if invert:
+        print("inverted")
+        where_0, where_1 = np.where(image == 0),np.where(image == 255)
+        image[where_0], image[where_1] = 255, 0
+    image = image.astype(np.float32)/255.0 
+    image = image[None].transpose(0, 3, 1, 2)
+    image = torch.from_numpy(image)
+    return image
+
+
 config = "optimizedSD/v1-inference.yaml"
 ckpt = "models/ldm/stable-diffusion-v1/model.ckpt"
 sd = load_model_from_config(f"{ckpt}")
@@ -118,12 +143,14 @@ def generate(
         seed = randint(0, 1000000)
     seed = int(seed)
     seed_everything(seed)
+    sampler = "ddim"
 
     # Logging
-    sampler = "ddim"
-    logger(locals(), log_csv = "logs/img2img_gradio_logs.csv")
+    logger(locals(), log_csv = "logs/inpaint_gradio_logs.csv")
 
-    init_image = load_img(image, Height, Width).to(device)
+    init_image = load_img(image['image'], Height, Width).to(device)
+    mask = load_mask(image['mask'], Height, Width, True).to(device)
+
     model.unet_bs = unet_bs
     model.turbo = turbo
     model.cdevice = device
@@ -134,6 +161,10 @@ def generate(
         modelCS.half()
         modelFS.half()
         init_image = init_image.half()
+        mask.half()
+
+    mask = mask[0][0].unsqueeze(0).repeat(4,1,1).unsqueeze(0)
+    mask = repeat(mask, '1 ... -> b ...', b=batch_size)
 
     tic = time.time()
     os.makedirs(outdir, exist_ok=True)
@@ -148,8 +179,8 @@ def generate(
 
     modelFS.to(device)
 
-    init_image = repeat(init_image, "1 ... -> b ...", b=batch_size)
     init_latent = modelFS.get_first_stage_encoding(modelFS.encode_first_stage(init_image))  # move to latent space
+    init_latent = repeat(init_latent, "1 ... -> b ...", b=batch_size)
 
     if device != "cpu":
         mem = torch.cuda.memory_allocated() / 1e6
@@ -157,7 +188,10 @@ def generate(
         while torch.cuda.memory_allocated() / 1e6 >= mem:
             time.sleep(1)
 
-    assert 0.0 <= strength <= 1.0, "can only work with strength in [0.0, 1.0]"
+    if strength == 1:
+        print("strength should be less than 1, setting it to 0.999")
+        strength = 0.999
+    assert 0.0 <= strength < 1.0, "can only work with strength in [0.0, 1.0]"
     t_enc = int(strength * ddim_steps)
     print(f"target t_enc is {t_enc} steps")
 
@@ -201,16 +235,19 @@ def generate(
 
                     # encode (scaled latent)
                     z_enc = model.stochastic_encode(
-                        init_latent, torch.tensor([t_enc] * batch_size).to(device), seed, ddim_eta, ddim_steps
-                    )
+                        init_latent, torch.tensor([t_enc] * batch_size).to(device),
+                        seed, ddim_eta, ddim_steps)
+                                       
                     # decode it
                     samples_ddim = model.sample(
-                                    t_enc,
-                                    c,
-                                    z_enc,
-                                    unconditional_guidance_scale=scale,
-                                    unconditional_conditioning=uc,
-                                    sampler = sampler
+                        t_enc,
+                        c,
+                        z_enc,
+                        unconditional_guidance_scale=scale,
+                        unconditional_conditioning=uc,
+                        mask = mask,
+                        x_T = init_latent,
+                        sampler = sampler,
                     )
 
                     modelFS.to(device)
@@ -254,15 +291,15 @@ def generate(
         + "\nSeeds used = "
         + seeds[:-1]
     )
-    return Image.fromarray(grid.astype(np.uint8)), txt
+    return Image.fromarray(grid.astype(np.uint8)), image['mask'],txt
 
 
 demo = gr.Interface(
     fn=generate,
     inputs=[
-        gr.Image(tool="editor", type="pil"),
+        gr.Image(tool="sketch", type="pil"),
         "text",
-        gr.Slider(0, 1, value=0.75),
+        gr.Slider(0, 0.99, value=0.99, step = 0.01),
         gr.Slider(1, 1000, value=50),
         gr.Slider(1, 100, step=1),
         gr.Slider(1, 100, step=1),
@@ -273,11 +310,11 @@ demo = gr.Interface(
         gr.Slider(1, 2, value=1, step=1),
         gr.Text(value="cuda"),
         "text",
-        gr.Text(value="outputs/img2img-samples"),
+        gr.Text(value="outputs/inpaint-samples"),
         gr.Radio(["png", "jpg"], value='png'),
         "checkbox",
         "checkbox",
     ],
-    outputs=["image", "text"],
+    outputs=["image", "image", "text"],
 )
 demo.launch()

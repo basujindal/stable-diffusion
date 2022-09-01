@@ -1,3 +1,7 @@
+# Update: v0.8
+
+[Added support for inpainting](#inpainting)
+
 <h1 align="center">Optimized Stable Diffusion</h1>
 <p align="center">
     <img src="https://img.shields.io/github/last-commit/basujindal/stable-diffusion?logo=Python&logoColor=green&style=for-the-badge"/>
@@ -12,6 +16,14 @@ To achieve this, the stable diffusion model is fragmented into four parts which 
 <h1 align="center">Installation</h1>
 
 All the modified files are in the [optimizedSD](optimizedSD) folder, so if you have already cloned the original repository you can just download and copy this folder into the original instead of cloning the entire repo. You can also clone this repo and follow the same installation steps as the original (mainly creating the conda environment and placing the weights at the specified location).
+
+Alternatively, if you prefer to use Docker, you can do the following:
+1. Install [Docker](https://docs.docker.com/engine/install/), [Docker Compose plugin](https://docs.docker.com/compose/install/), and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#docker)
+2. Clone this repo to, e.g., `~/stable-diffusion`
+3. Put your downloaded `model.ckpt` file into `~/sd-data` (it's a relative path, you can change it in `docker-compose.yml`)
+4. `cd` into `~/stable-diffusion` and execute `docker compose up --build`
+
+This will launch gradio on port 7860 with txt2img. You can also use `docker compose run` to execute other Python scripts.
 
 <h1 align="center">Usage</h1>
 
@@ -33,11 +45,21 @@ All the modified files are in the [optimizedSD](optimizedSD) folder, so if you h
 
 `python optimizedSD/optimized_txt2img.py --prompt "Cyberpunk style image of a Telsa car reflection in rain" --H 512 --W 512 --seed 27 --n_iter 2 --n_samples 10 --ddim_steps 50`
 
+## inpainting
+
+- `inpaint_gradio.py` can fill masked parts of an image based on a given prompt. It can inpaint 512x512 images while using under 4GB of VRAM.
+
+- To launch the gradio interface for inpainting, run `python optimizedSD/inpaint_gradio.py`. The mask for the image can be drawn on the selected image using the brush tool.
+
+- The results are not yet perfect but can be improved by using a combination of prompt weighting, prompt engineering and testing out multiple values of the `--strength` argument.
+
+- _Suggestions to improve the inpainting algorithm are most welcome_.
+
 <h1 align="center">Using the Gradio GUI</h1>
 
-- You can also use the built-in gradio interface for `img2img` & `txt2img` instead of the command line interface. Activate the conda environment and install the latest version of gradio using `pip install gradio`,
+- You can also use the built-in gradio interface for `img2img`, `txt2img` & `inpainting` instead of the command line interface. Activate the conda environment and install the latest version of gradio using `pip install gradio`,
 
-- Run img2img using `python3 optimizedSD/img2img_gradio.py` and txt2img using `python3 optimizedSD/txt2img_gradio.py`.
+- Run img2img using `python optimizedSD/img2img_gradio.py`, txt2img using `python optimizedSD/txt2img_gradio.py` and inpainting using `python optimizedSD/inpaint_gradio.py`.
 
 - img2img_gradio.py has a feature to crop input images. Look for the pen symbol in the image box after selecting the image.
 
@@ -106,6 +128,7 @@ All the modified files are in the [optimizedSD](optimizedSD) folder, so if you h
 
 ## Changelog
 
+- v0.8: Added gradio interface for inpainting.
 - v0.7: Added support for logging, jpg file format
 - v0.6: Added support for using weighted prompts. (based on @lstein's [repo](https://github.com/lstein/stable-diffusion))
 - v0.5: Added support for using gradio interface.
