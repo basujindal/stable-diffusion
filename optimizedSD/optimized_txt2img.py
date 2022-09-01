@@ -147,7 +147,7 @@ parser.add_argument(
     help="Reduces inference time on the expense of 1GB VRAM",
 )
 parser.add_argument(
-    "--precision", 
+    "--precision",
     type=str,
     help="evaluate at this precision",
     choices=["full", "autocast"],
@@ -159,6 +159,11 @@ parser.add_argument(
     help="output image format",
     choices=["jpg", "png"],
     default="png",
+)
+parser.add_argument(
+    "--face_enhance",
+    action="store_true",
+    help="Enhance faces"
 )
 opt = parser.parse_args()
 
@@ -248,6 +253,8 @@ with torch.no_grad():
         for prompts in tqdm(data, desc="data"):
 
             sample_path = os.path.join(outpath, "_".join(re.split(":| ", prompts[0])))[:150]
+            sample_path = os.path.abspath(sample_path)
+
             os.makedirs(sample_path, exist_ok=True)
             base_count = len(os.listdir(sample_path))
 
@@ -297,13 +304,20 @@ with torch.no_grad():
 
                 print(samples_ddim.shape)
                 print("saving images")
+
+                file_paths = list()
+
                 for i in range(batch_size):
 
                     x_samples_ddim = modelFS.decode_first_stage(samples_ddim[i].unsqueeze(0))
                     x_sample = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
                     x_sample = 255.0 * rearrange(x_sample[0].cpu().numpy(), "c h w -> h w c")
+
+                    file_path = os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.{opt.format}")
+                    file_paths.append(file_path)
+
                     Image.fromarray(x_sample.astype(np.uint8)).save(
-                        os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.{opt.format}")
+                        file_path
                     )
                     seeds += str(opt.seed) + ","
                     opt.seed += 1
@@ -316,6 +330,22 @@ with torch.no_grad():
                         time.sleep(1)
                 del samples_ddim
                 print("memory_final = ", torch.cuda.memory_allocated() / 1e6)
+
+                # unload samples from memory
+                del x_samples_ddim
+                del x_sample
+                torch.cuda.empty_cache()
+
+                print("upscaling images")
+                for file_path in file_paths:
+                    command = "cd ../Real-ESRGAN/ && python inference_realesrgan.py --suffix \"\" --input \"{file_path}\" --output \"{sample_path}\""
+                    if (opt.face_enhance):
+                        command += " --face_enhance"
+                    command = command.format(file_path=file_path, sample_path=sample_path)
+                    os.system(command)
+
+                print("done")
+
 
 toc = time.time()
 
