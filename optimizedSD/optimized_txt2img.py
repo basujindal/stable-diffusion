@@ -15,6 +15,8 @@ from contextlib import contextmanager, nullcontext
 from ldm.util import instantiate_from_config
 from optimUtils import split_weighted_subprompts, logger
 from transformers import logging
+from libxmp import XMPFiles, consts, XMPMeta  # apt install exempi; pip install python-xmp-toolkit
+
 # from samplers import CompVisDenoiser
 logging.set_verbosity_error()
 
@@ -31,6 +33,22 @@ def load_model_from_config(ckpt, verbose=False):
         print(f"Global Step: {pl_sd['global_step']}")
     sd = pl_sd["state_dict"]
     return sd
+
+
+def add_metadata(filename, opt):
+    if opt.skip_metadata:
+        return
+
+    metadata = str(opt)
+
+    xmpfile = XMPFiles(file_path=filename, open_forupdate=True)
+    xmp = xmpfile.get_xmp()
+    if xmp is None:
+        xmp = XMPMeta()
+    xmp.append_array_item(consts.XMP_NS_DC, 'description', metadata,
+        {'prop_array_is_ordered':True, 'prop_value_is_array':True})
+    xmpfile.put_xmp(xmp)
+    xmpfile.close_file()
 
 
 config = "optimizedSD/v1-inference.yaml"
@@ -166,6 +184,11 @@ parser.add_argument(
     help="sampler",
     choices=["ddim", "plms"],
     default="plms",
+)
+parser.add_argument(
+    "--skip_metadata",
+    action='store_true',
+    help="do not add generation metadata to image file.",
 )
 opt = parser.parse_args()
 
@@ -309,9 +332,9 @@ with torch.no_grad():
                     x_samples_ddim = modelFS.decode_first_stage(samples_ddim[i].unsqueeze(0))
                     x_sample = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
                     x_sample = 255.0 * rearrange(x_sample[0].cpu().numpy(), "c h w -> h w c")
-                    Image.fromarray(x_sample.astype(np.uint8)).save(
-                        os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.{opt.format}")
-                    )
+                    filename = os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.{opt.format}")
+                    Image.fromarray(x_sample.astype(np.uint8)).save(filename)
+                    add_metadata(filename, opt)
                     seeds += str(opt.seed) + ","
                     opt.seed += 1
                     base_count += 1
