@@ -15,7 +15,7 @@ from contextlib import contextmanager, nullcontext
 from ldm.util import instantiate_from_config
 from optimUtils import split_weighted_subprompts, logger
 from transformers import logging
-from libxmp import XMPFiles, consts, XMPMeta  # apt install exempi; pip install python-xmp-toolkit
+import pyexiv2
 import json
 
 # from samplers import CompVisDenoiser
@@ -48,14 +48,8 @@ def add_metadata(filename, opt):
         safe_opts[k] = v
     metadata = json.dumps(safe_opts)
 
-    xmpfile = XMPFiles(file_path=filename, open_forupdate=True)
-    xmp = xmpfile.get_xmp()
-    if xmp is None:
-        xmp = XMPMeta()
-    xmp.append_array_item(consts.XMP_NS_DC, 'description', metadata,
-        {'prop_array_is_ordered':True, 'prop_value_is_array':True})
-    xmpfile.put_xmp(xmp)
-    xmpfile.close_file()
+    img = pyexiv2.Image(filename)
+    img.modify_xmp({'Xmp.dc.description': metadata})
 
 
 config = "optimizedSD/v1-inference.yaml"
