@@ -16,6 +16,7 @@ from ldm.util import instantiate_from_config
 from optimUtils import split_weighted_subprompts, logger
 from transformers import logging
 from libxmp import XMPFiles, consts, XMPMeta  # apt install exempi; pip install python-xmp-toolkit
+import json
 
 # from samplers import CompVisDenoiser
 logging.set_verbosity_error()
@@ -39,7 +40,13 @@ def add_metadata(filename, opt):
     if opt.skip_metadata:
         return
 
-    metadata = str(opt)
+    SKIP_OPT_KEYS = ['outdir']
+    safe_opts = {}
+    for k, v in vars(opt).items():
+        if k in SKIP_OPT_KEYS:
+            continue
+        safe_opts[k] = v
+    metadata = json.dumps(safe_opts)
 
     xmpfile = XMPFiles(file_path=filename, open_forupdate=True)
     xmp = xmpfile.get_xmp()
