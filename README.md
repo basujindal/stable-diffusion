@@ -119,6 +119,12 @@ This will launch gradio on port 7860 with txt2img. You can also use `docker comp
 
 - Should generally be a multiple of 2x(n_samples)
 
+## `--skip_metadata`
+
+**Whether to embed generation metadata (prompt, seed, size, etc.) in the generated file.**
+
+- Uses the [XMP](https://en.wikipedia.org/wiki/Extensible_Metadata_Platform) Description field to embed most of the command-line parameters that were used to generate the image. Excludes potentially privacy-sensitive parameters such as `outdir`. Currently works only with txt2img, not img2img. Enabled by default.
+
 <h1 align="center">Weighted Prompts</h1>
 
 - Prompts can also be weighted to put relative emphasis on certain words.
