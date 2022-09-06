@@ -48,8 +48,11 @@ def add_metadata(filename, opt):
         safe_opts[k] = v
     metadata = json.dumps(safe_opts)
 
-    img = pyexiv2.Image(filename)
-    img.modify_xmp({'Xmp.dc.description': metadata})
+    img_md = pyexiv2.ImageMetadata(filename)
+    img_md.read()
+    key = 'Xmp.dc.description'
+    img_md[key] = pyexiv2.XmpTag(key, metadata)
+    img_md.write()
 
 
 config = "optimizedSD/v1-inference.yaml"
