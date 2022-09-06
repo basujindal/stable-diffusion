@@ -15,7 +15,8 @@ from contextlib import contextmanager, nullcontext
 from ldm.util import instantiate_from_config
 from optimUtils import split_weighted_subprompts, logger
 from transformers import logging
-import pyexiv2
+import tinyxmp
+import xml.dom.minidom
 import json
 
 # from samplers import CompVisDenoiser
@@ -48,11 +49,24 @@ def add_metadata(filename, opt):
         safe_opts[k] = v
     metadata = json.dumps(safe_opts)
 
-    img_md = pyexiv2.ImageMetadata(filename)
-    img_md.read()
-    key = 'Xmp.dc.description'
-    img_md[key] = pyexiv2.XmpTag(key, metadata)
-    img_md.write()
+    xmp_file = tinyxmp.Metadata.load(filename)
+    # Since we just generated this file, we know there's no meaningful XMP data in it.
+    # So we create an empty template.
+    xmp = '''
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:description>
+      <rdf:Seq><rdf:li></rdf:li>
+      </rdf:Seq>
+    </dc:description>
+  </rdf:Description>
+</rdf:RDF>'''
+
+    doc = xml.dom.minidom.parseString(xmp)
+    e = doc.getElementsByTagName("rdf:li")[0]
+    textnode = doc.createTextNode(metadata)
+    e.appendChild(textnode)
+    xmp_file.write_xmp(doc.childNodes[0].toxml().encode("utf-8"))
 
 
 config = "optimizedSD/v1-inference.yaml"
