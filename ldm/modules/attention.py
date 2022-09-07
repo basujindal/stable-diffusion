@@ -199,13 +199,13 @@ class CrossAttention(nn.Module):
             sim_buffer = einsum('b i d, b j d -> b i j', q_buffer, k_buffer) * self.scale
 
             del k_buffer, q_buffer
-            '''
+
             if exists(mask):
                 mask_buffer = rearrange(mask[i:i+att_step,:,:,:], 'b ... -> b (...)')
                 max_neg_value = -torch.finfo(sim_buffer.dtype).max
                 mask_buffer = repeat(mask_buffer, 'b j -> (b h) () j', h=h)
                 sim_buffer.masked_fill_(~mask_buffer, max_neg_value)
-            '''
+
         # attention, what we cannot get enough of, by chunks
 
             sim_buffer = sim_buffer.softmax(dim=-1)
