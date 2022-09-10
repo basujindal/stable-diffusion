@@ -6,7 +6,6 @@ import os, re
 from PIL import Image
 import torch
 import numpy as np
-from random import randint
 from omegaconf import OmegaConf
 from PIL import Image
 from tqdm import tqdm, trange
@@ -115,7 +114,7 @@ def generate(
 ):
 
     if seed == "":
-        seed = randint(0, 1000000)
+        seed = np.random.randint(np.iinfo(np.uint32).max, dtype='uint32')
     seed = int(seed)
     seed_everything(seed)
 

@@ -1,7 +1,6 @@
 import argparse, os, re
 import torch
 import numpy as np
-from random import randint
 from omegaconf import OmegaConf
 from PIL import Image
 from tqdm import tqdm, trange
@@ -175,7 +174,7 @@ outpath = opt.outdir
 grid_count = len(os.listdir(outpath)) - 1
 
 if opt.seed == None:
-    opt.seed = randint(0, 1000000)
+    opt.seed = np.random.randint(np.iinfo(np.uint32).max, dtype='uint32')
 seed_everything(opt.seed)
 
 # Logging

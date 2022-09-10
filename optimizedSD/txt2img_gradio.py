@@ -8,7 +8,6 @@ from PIL import Image
 import torch
 import pandas as pd
 import numpy as np
-from random import randint
 from omegaconf import OmegaConf
 from PIL import Image
 from tqdm import tqdm, trange
@@ -105,7 +104,7 @@ def generate(
     modelCS.cond_stage_model.device = device
 
     if seed == "":
-        seed = randint(0, 1000000)
+        seed = np.random.randint(np.iinfo(np.uint32).max, dtype='uint32')
     seed = int(seed)
     seed_everything(seed)
     # Logging
