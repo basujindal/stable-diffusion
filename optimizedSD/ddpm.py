@@ -595,10 +595,8 @@ class UNet(DDPM):
             if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
                 e_t = self.apply_model(x, t, c)
             else:
-                x_in = torch.cat([x] * 2)
-                t_in = torch.cat([t] * 2)
-                c_in = torch.cat([unconditional_conditioning, c])
-                e_t_uncond, e_t = self.apply_model(x_in, t_in, c_in).chunk(2)
+                e_t_uncond = self.apply_model(x, t, unconditional_conditioning)
+                e_t = self.apply_model(x, t, c)
                 e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
 
             if score_corrector is not None:
@@ -726,10 +724,8 @@ class UNet(DDPM):
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
             e_t = self.apply_model(x, t, c)
         else:
-            x_in = torch.cat([x] * 2)
-            t_in = torch.cat([t] * 2)
-            c_in = torch.cat([unconditional_conditioning, c])
-            e_t_uncond, e_t = self.apply_model(x_in, t_in, c_in).chunk(2)
+            e_t_uncond = self.apply_model(x, t, unconditional_conditioning)
+            e_t = self.apply_model(x, t, c)
             e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
 
         if score_corrector is not None:
@@ -839,12 +835,12 @@ class UNet(DDPM):
                 x = x + eps * (sigma_hat ** 2 - sigmas[i] ** 2) ** 0.5
 
             # print(sigma_hat * s_in)
-            # x, sigma_hat * s_in, cond
-            x_in = torch.cat([x] * 2)
-            t_in = torch.cat([sigma_hat * s_in] * 2)
-            c_in = torch.cat([unconditional_conditioning, cond])
-            e_t_uncond, e_t = self.apply_model(x_in, t_in, c_in).chunk(2)
+            t = sigma_hat * s_in
+            e_t_uncond = self.apply_model(x, t, unconditional_conditioning)
+            e_t = self.apply_model(x, t, cond)
             denoised = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+            del e_t
+            del e_t_uncond
             # denoised = self.apply_model(x, sigma_hat * s_in, cond)
             d = self.to_d(x, sigma_hat, denoised)
             if callback is not None:
