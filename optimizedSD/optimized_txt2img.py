@@ -15,6 +15,10 @@ from contextlib import contextmanager, nullcontext
 from ldm.util import instantiate_from_config
 from optimUtils import split_weighted_subprompts, logger
 from transformers import logging
+import tinyxmp
+import xml.dom.minidom
+import json
+
 # from samplers import CompVisDenoiser
 logging.set_verbosity_error()
 
@@ -31,6 +35,38 @@ def load_model_from_config(ckpt, verbose=False):
         print(f"Global Step: {pl_sd['global_step']}")
     sd = pl_sd["state_dict"]
     return sd
+
+
+def add_metadata(filename, opt):
+    if opt.skip_metadata:
+        return
+
+    SKIP_OPT_KEYS = ['outdir']
+    safe_opts = {}
+    for k, v in vars(opt).items():
+        if k in SKIP_OPT_KEYS:
+            continue
+        safe_opts[k] = v
+    metadata = json.dumps(safe_opts)
+
+    xmp_file = tinyxmp.Metadata.load(filename)
+    # Since we just generated this file, we know there's no meaningful XMP data in it.
+    # So we create an empty template.
+    xmp = '''
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:description>
+      <rdf:Seq><rdf:li></rdf:li>
+      </rdf:Seq>
+    </dc:description>
+  </rdf:Description>
+</rdf:RDF>'''
+
+    doc = xml.dom.minidom.parseString(xmp)
+    e = doc.getElementsByTagName("rdf:li")[0]
+    textnode = doc.createTextNode(metadata)
+    e.appendChild(textnode)
+    xmp_file.write_xmp(doc.childNodes[0].toxml().encode("utf-8"))
 
 
 config = "optimizedSD/v1-inference.yaml"
@@ -166,6 +202,11 @@ parser.add_argument(
     help="sampler",
     choices=["ddim", "plms","heun", "euler", "euler_a", "dpm2", "dpm2_a", "lms"],
     default="plms",
+)
+parser.add_argument(
+    "--skip_metadata",
+    action='store_true',
+    help="do not add generation metadata to image file.",
 )
 opt = parser.parse_args()
 
@@ -309,9 +350,9 @@ with torch.no_grad():
                     x_samples_ddim = modelFS.decode_first_stage(samples_ddim[i].unsqueeze(0))
                     x_sample = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
                     x_sample = 255.0 * rearrange(x_sample[0].cpu().numpy(), "c h w -> h w c")
-                    Image.fromarray(x_sample.astype(np.uint8)).save(
-                        os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.{opt.format}")
-                    )
+                    filename = os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.{opt.format}")
+                    Image.fromarray(x_sample.astype(np.uint8)).save(filename)
+                    add_metadata(filename, opt)
                     seeds += str(opt.seed) + ","
                     opt.seed += 1
                     base_count += 1
