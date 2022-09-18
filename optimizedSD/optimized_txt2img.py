@@ -238,12 +238,15 @@ n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
 if not opt.from_file:
     assert opt.prompt is not None
     prompt = opt.prompt
+    print(f"Using prompt: {prompt}")
     data = [batch_size * [prompt]]
 
 else:
     print(f"reading prompts from {opt.from_file}")
     with open(opt.from_file, "r") as f:
-        data = f.read().splitlines()
+        text = f.read()
+        print(f"Using prompt: {text.strip()}")
+        data = text.splitlines()
         data = batch_size * list(data)
         data = list(chunk(sorted(data), batch_size))
 
