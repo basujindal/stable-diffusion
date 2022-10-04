@@ -24,6 +24,7 @@ from optimUtils import split_weighted_subprompts, logger
 from transformers import logging
 logging.set_verbosity_error()
 import mimetypes
+import glob
 mimetypes.init()
 mimetypes.add_type("application/javascript", ".js")
 
@@ -222,9 +223,10 @@ def generate(
         + "\nSeeds used = "
         + seeds[:-1]
     )
-    
+
     # write the metadata to a file
-    with open(os.path.join(sample_path, "description" + "_" + f"{base_count:05}.txt"), 'w') as f:
+    txt_count = len(glob.glob(sample_path+"/*.txt")) + 1
+    with open(os.path.join(sample_path, "description" + "_" + f"{txt_count:05}.txt"), 'w') as f:
         f.write(prompt)
         f.write("\n--------------")
         f.write("\nddim_steps: "+str(ddim_steps))
@@ -236,13 +238,13 @@ def generate(
         f.write("\nddim_eta: "+str(ddim_eta))
         f.write("\nunet_bs: "+str(unet_bs))
         f.write("\ndevice: "+str(device))
-        f.write("\nseed: "+str(seed))
+        f.write("\nseeds: "+seeds[:-1])
         f.write("\nturbo: "+str(turbo))
         f.write("\nfull_precision: "+str(full_precision))
         f.write("\nsampler: "+str(sampler))
         f.write("\n--------------")
         f.write("\nOutput: \n"+txt)
-    
+
     return Image.fromarray(grid.astype(np.uint8)), txt
 
 
