@@ -4,7 +4,6 @@ import re
 import time
 from contextlib import nullcontext
 from itertools import islice
-from random import randint
 
 import gradio as gr
 import numpy as np
@@ -104,7 +103,7 @@ def generate(
         full_precision,
 ):
     if seed == "":
-        seed = randint(0, 1000000)
+        seed = np.random.randint(np.iinfo(np.uint32).max, dtype='uint32')
     seed = int(seed)
     seed_everything(seed)
     sampler = "ddim"
