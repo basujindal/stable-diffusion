@@ -526,7 +526,9 @@ class UNet(DDPM):
                                         )
 
         elif sampler == "ddim":
-            samples = self.ddim_sampling(x_latent, conditioning, S, unconditional_guidance_scale=unconditional_guidance_scale,
+            samples = self.ddim_sampling(x_latent, conditioning, S,
+                                         callback=callback, img_callback=img_callback,
+                                         unconditional_guidance_scale=unconditional_guidance_scale,
                                          unconditional_conditioning=unconditional_conditioning,
                                          mask = mask,init_latent=x_T,use_original_steps=False)
 
@@ -706,7 +708,8 @@ class UNet(DDPM):
 
     @torch.no_grad()
     def ddim_sampling(self, x_latent, cond, t_start, unconditional_guidance_scale=1.0, unconditional_conditioning=None,
-               mask = None,init_latent=None,use_original_steps=False):
+               mask = None,init_latent=None,use_original_steps=False,
+               callback=None, img_callback=None):
 
         timesteps = self.ddim_timesteps
         timesteps = timesteps[:t_start]
@@ -726,10 +729,12 @@ class UNet(DDPM):
                 x0_noisy = x0
                 x_dec = x0_noisy* mask + (1. - mask) * x_dec
 
-            x_dec = self.p_sample_ddim(x_dec, cond, ts, index=index, use_original_steps=use_original_steps,
+            x_dec, pred_x0 = self.p_sample_ddim(x_dec, cond, ts, index=index, use_original_steps=use_original_steps,
                                           unconditional_guidance_scale=unconditional_guidance_scale,
                                           unconditional_conditioning=unconditional_conditioning)
-        
+            if callback: callback(i)
+            if img_callback: img_callback(pred_x0, i)
+
         if mask is not None:
             return x0 * mask + (1. - mask) * x_dec
 
@@ -775,7 +780,7 @@ class UNet(DDPM):
         if noise_dropout > 0.:
             noise = torch.nn.functional.dropout(noise, p=noise_dropout)
         x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
-        return x_prev
+        return x_prev, pred_x0
 
 
     @torch.no_grad()
