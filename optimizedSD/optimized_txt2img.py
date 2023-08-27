@@ -130,6 +130,11 @@ parser.add_argument(
     help="if specified, load prompts from this file",
 )
 parser.add_argument(
+    "--negative-prompt-file",
+    type=str,
+    help="if specified, load negative prompts from this file",
+)
+parser.add_argument(
     "--seed",
     type=int,
     default=None,
@@ -235,6 +240,7 @@ if opt.fixed_code:
 
 batch_size = opt.n_samples
 n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
+
 if not opt.from_file:
     assert opt.prompt is not None
     prompt = opt.prompt
@@ -250,6 +256,13 @@ else:
         data = batch_size * list(data)
         data = list(chunk(sorted(data), batch_size))
 
+if not opt.negative_prompt_file:
+    negative_prompt = ""
+else:
+    print(f"reading negative prompts from {opt.negative_prompt_file}")
+    with open(opt.negative_prompt_file, "r") as f:
+        negative_prompt = f.read().splitlines()
+        negative_prompt = ' '.join(negative_prompt)
 
 if opt.precision == "autocast" and opt.device != "cpu":
     precision_scope = autocast
@@ -271,7 +284,7 @@ with torch.no_grad():
                 modelCS.to(opt.device)
                 uc = None
                 if opt.scale != 1.0:
-                    uc = modelCS.get_learned_conditioning(batch_size * [""])
+                    uc = modelCS.get_learned_conditioning(batch_size * [negative_prompt])
                 if isinstance(prompts, tuple):
                     prompts = list(prompts)
 
